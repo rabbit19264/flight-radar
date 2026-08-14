@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>雷達飛航 · Live Flight Radar</title>
+<style>
+  @font-face { font-family: 'local-mono'; src: local('JetBrains Mono'), local('SF Mono'), local('Menlo'); }
+
+  :root{
+    --bg: #05100a;
+    --bg-2: #08160f;
+    --grid: #133621;
+    --grid-strong: #1d4a2c;
+    --sweep: #4bff8a;
+    --sweep-dim: rgba(75,255,138,0.08);
+    --text: #dcffe9;
+    --text-dim: #6fae86;
+    --amber: #ffb020;
+    --magenta: #e26bff;
+    --danger: #ff5f5f;
+    --panel: rgba(6,20,12,0.92);
+    --border: #1e4a2d;
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{
+    margin:0; padding:0; height:100%; background:var(--bg);
+    font-family: 'local-mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    color:var(--text);
+    overflow:hidden;
+    overscroll-behavior:none;
+  }
+  #app{
+    position:relative; width:100vw; height:100dvh; display:flex; flex-direction:column;
+    background:
+      radial-gradient(ellipse at 50% 20%, rgba(75,255,138,0.05), transparent 60%),
+      linear-gradient(180deg, var(--bg-2), var(--bg));
+  }
+
+  /* ---------- Header ---------- */
+  header{
+    flex: 0 0 auto;
+    padding: 14px 18px 8px;
+    display:flex; align-items:baseline; justify-content:space-between;
+    border-bottom: 1px solid var(--grid);
+  }
+  .brand{ display:flex; flex-direction:column; gap:2px; }
+  .brand .title{
+    font-family: 'Arial Narrow', ui-monospace, monospace;
+    font-weight:800; letter-spacing:3px; font-size: 20px;
+    background: linear-gradient(90deg, #d8ffe6, var(--sweep) 55%, #1e5c37);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-transform:uppercase;
+  }
+  .brand .sub{ font-size:10px; color:var(--text-dim); letter-spacing:2px; text-transform:uppercase;}
+  .status{ text-align:right; font-size:10px; color:var(--text-dim); letter-spacing:1px; }
+  .status .dot{ display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--danger); margin-right:5px; box-shadow:0 0 6px var(--danger); }
+  .status.live .dot{ background:var(--sweep); box-shadow:0 0 6px var(--sweep); animation:pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.35} }
+
+  /* ---------- Radar ---------- */
+  #radarWrap{
+    position:relative; flex: 1 1 auto; display:flex; align-items:center; justify-content:center;
+    min-height: 0;
+    padding: 6px;
+  }
+  #radarCanvas{ display:block; touch-action: none; }
+
+  .range-ctl{
+    position:absolute; left:14px; top:14px; display:flex; flex-direction:column; gap:6px; z-index:5;
+  }
+  .range-btn{
+    width:34px; height:34px; border-radius:50%; border:1px solid var(--border);
+    background: rgba(6,20,12,0.75); color:var(--sweep); font-size:16px; font-weight:700;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .locate-btn{
+    position:absolute; right:14px; top:14px; z-index:5;
+    border:1px solid var(--border); background: rgba(6,20,12,0.75); color:var(--sweep);
+    font-size:10px; letter-spacing:1px; padding:8px 10px; border-radius:8px;
+    display:flex; align-items:center; gap:6px; text-transform:uppercase;
+  }
+  .radius-label{
+    position:absolute; left:14px; bottom:14px; z-index:5; font-size:10px; color:var(--text-dim);
+    background: rgba(6,20,12,0.6); padding:4px 8px; border-radius:6px; border:1px solid var(--grid);
+    letter-spacing:1px;
+  }
+  .count-label{
+    position:absolute; right:14px; bottom:14px; z-index:5; font-size:10px; color:var(--sweep);
+    background: rgba(6,20,12,0.6); padding:4px 8px; border-radius:6px; border:1px solid var(--grid);
+    letter-spacing:1px;
+  }
+
+  /* ---------- Pinned detail card (mimics watch UI) ---------- */
+  #pinCard{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%) scale(0.9);
+    width: min(78%, 300px);
+    background: var(--panel);
+    border: 1px solid var(--sweep);
+    border-radius: 14px;
+    padding: 12px 14px;
+    box-shadow: 0 0 24px rgba(75,255,138,0.25), inset 0 0 20px rgba(75,255,138,0.03);
+    opacity:0; pointer-events:none; transition: opacity .18s ease, transform .18s ease;
+    z-index:20;
+  }
+  #pinCard.show{ opacity:1; pointer-events:auto; transform:translate(-50%,-50%) scale(1); }
+  #pinCard .pinHead{
+    display:flex; align-items:center; justify-content:space-between; margin-bottom:6px;
+  }
+  #pinCard .pinTag{
+    font-size:9px; letter-spacing:2px; color:var(--sweep); border:1px solid var(--sweep);
+    padding:2px 8px; border-radius:20px; text-transform:uppercase;
+  }
+  #pinCard .pinClose{ color:var(--text-dim); font-size:14px; padding:2px 6px; }
+  #pinCard .callsign{ font-size:17px; font-weight:700; color:#fff; letter-spacing:1px; }
+  #pinCard .aircraftType{ font-size:11px; color:var(--text-dim); margin-bottom:6px; }
+  #pinCard .route{ color:var(--amber); font-size:13px; font-weight:700; letter-spacing:.5px; margin: 4px 0 8px; }
+  #pinCard .metrics{ font-size:12.5px; color:var(--sweep); line-height:1.7; }
+  #pinCard .metrics span.k{ color:var(--text-dim); }
+
+  /* ---------- Bottom sheet: nearby list ---------- */
+  #sheet{
+    flex: 0 0 auto;
+    border-top: 1px solid var(--grid);
+    background: linear-gradient(180deg, rgba(8,22,14,0.9), var(--bg));
+    max-height: 34dvh;
+    display:flex; flex-direction:column;
+  }
+  #sheetHandle{
+    display:flex; justify-content:center; padding:6px 0 2px; flex:0 0 auto;
+  }
+  #sheetHandle .bar{ width:36px; height:3px; border-radius:3px; background:var(--grid-strong); }
+  #sheetTitle{
+    flex:0 0 auto; font-size:10px; letter-spacing:2px; color:var(--text-dim);
+    text-transform:uppercase; padding: 0 16px 6px; display:flex; justify-content:space-between;
+  }
+  #list{ overflow-y:auto; padding: 0 10px 10px; flex:1 1 auto; }
+  .row{
+    display:flex; align-items:center; justify-content:space-between;
+    padding: 9px 8px; border-bottom: 1px solid rgba(30,74,45,0.4);
+  }
+  .row:active{ background: rgba(75,255,138,0.06); }
+  .row .left{ display:flex; flex-direction:column; gap:2px; }
+  .row .cs{ font-size:13px; font-weight:700; color:#fff; letter-spacing:.5px; }
+  .row .ctry{ font-size:10px; color:var(--text-dim); }
+  .row .right{ text-align:right; font-size:11px; color:var(--sweep); }
+  .row .right .alt{ color:var(--text-dim); font-size:10px; }
+  .empty{ text-align:center; color:var(--text-dim); font-size:11px; padding: 18px 0; }
+
+  .toast{
+    position:absolute; left:50%; bottom: 12px; transform:translateX(-50%);
+    background: rgba(255,95,95,0.12); border:1px solid var(--danger); color:#ffb3b3;
+    font-size:11px; padding:8px 12px; border-radius:8px; z-index:30; max-width:82%; text-align:center;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="brand">
+      <div class="title">FLIGHT&nbsp;DETAILS</div>
+      <div class="sub">Live aircraft information</div>
+    </div>
+    <div class="status" id="statusEl"><span class="dot"></span><span id="statusText">連線中…</span></div>
+  </header>
+
+  <div id="radarWrap">
+    <canvas id="radarCanvas"></canvas>
+
+    <div class="range-ctl">
+      <div class="range-btn" id="zoomIn">＋</div>
+      <div class="range-btn" id="zoomOut">－</div>
+    </div>
+    <div class="locate-btn" id="locateBtn">⦿ 定位</div>
+    <div class="radius-label" id="radiusLabel">半徑 100 km</div>
+    <div class="count-label" id="countLabel">0 架飛機</div>
+
+    <div id="pinCard">
+      <div class="pinHead">
+        <span class="pinTag">PIN FLIGHT</span>
+        <span class="pinClose" id="pinClose">✕</span>
+      </div>
+      <div class="callsign" id="pinCallsign">—</div>
+      <div class="aircraftType" id="pinCountry">—</div>
+      <div class="route" id="pinRoute">—</div>
+      <div class="metrics" id="pinMetrics"></div>
+    </div>
+  </div>
+
+  <div id="sheet">
+    <div id="sheetHandle"><div class="bar"></div></div>
+    <div id="sheetTitle"><span>附近航班</span><span id="updatedAgo">—</span></div>
+    <div id="list"></div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  // ---------------- State ----------------
+  let center = { lat: 25.0330, lon: 121.5654 }; // default: Taipei, until located
+  let radiusKm = 100;
+  const ZOOM_STEPS = [25, 50, 100, 200, 400];
+  let zoomIdx = 2;
+
+  let planes = [];        // latest fetched states
+  let pinned = null;      // pinned icao24
+  let lastUpdate = null;
+  let fetchTimer = null;
+  let sweepAngle = 0;
+
+  const canvas = document.getElementById('radarCanvas');
+  const ctx = canvas.getContext('2d');
+  const radarWrap = document.getElementById('radarWrap');
+  const statusEl = document.getElementById('statusEl');
+  const statusText = document.getElementById('statusText');
+  const radiusLabel = document.getElementById('radiusLabel');
+  const countLabel = document.getElementById('countLabel');
+  const updatedAgo = document.getElementById('updatedAgo');
+  const listEl = document.getElementById('list');
+  const pinCard = document.getElementById('pinCard');
+
+  // ---------------- Canvas sizing ----------------
+  let dpr = Math.max(1, window.devicePixelRatio || 1);
+  let size = 0;
+
+  function resize(){
+    const rect = radarWrap.getBoundingClientRect();
+    size = Math.max(220, Math.min(rect.width, rect.height) - 16);
+    canvas.style.width = size + 'px';
+    canvas.style.height = size + 'px';
+    canvas.width = size * dpr;
+    canvas.height = size * dpr;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  window.addEventListener('resize', resize);
+
+  // ---------------- Geo helpers ----------------
+  function toRad(d){ return d * Math.PI/180; }
+  function toDeg(r){ return r * 180/Math.PI; }
+
+  function bearingDistance(lat1, lon1, lat2, lon2){
+    const R = 6371;
+    const dLat = toRad(lat2-lat1);
+    const dLon = toRad(lon2-lon1);
+    const a = Math.sin(dLat/2)**2 + Math.cos(toRad(lat1))*Math.cos(toRad(lat2))*Math.sin(dLon/2)**2;
+    const dist = 2*R*Math.asin(Math.sqrt(a));
+    const y = Math.sin(dLon)*Math.cos(toRad(lat2));
+    const x = Math.cos(toRad(lat1))*Math.sin(toRad(lat2)) - Math.sin(toRad(lat1))*Math.cos(toRad(lat2))*Math.cos(dLon);
+    let brng = (toDeg(Math.atan2(y,x)) + 360) % 360;
+    return { dist, brng };
+  }
+
+  function bboxFromRadius(lat, lon, km){
+    const dLat = km / 111.32;
+    const dLon = km / (111.32 * Math.cos(toRad(lat)) || 0.01);
+    return {
+      lamin: lat - dLat, lamax: lat + dLat,
+      lomin: lon - dLon, lomax: lon + dLon
+    };
+  }
+
+  // ---------------- Data fetch (OpenSky Network, free/no key) ----------------
+  async function fetchPlanes(){
+    const box = bboxFromRadius(center.lat, center.lon, radiusKm);
+    const url = `https://opensky-network.org/api/states/all?lamin=${box.lamin}&lomin=${box.lomin}&lamax=${box.lamax}&lomax=${box.lomax}`;
+    try{
+      const res = await fetch(url, { cache: 'no-store' });
+      if(!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      const rows = data.states || [];
+      const out = [];
+      for(const r of rows){
+        const [icao24, callsign, origin_country, , , lon, lat, baro_alt, on_ground, velocity, true_track, vertical_rate] = r;
+        if(lat == null || lon == null) continue;
+        if(on_ground) continue;
+        const { dist, brng } = bearingDistance(center.lat, center.lon, lat, lon);
+        if(dist > radiusKm) continue;
+        out.push({
+          icao24,
+          callsign: (callsign || '').trim() || icao24.toUpperCase(),
+          country: origin_country || '—',
+          lat, lon,
+          altFt: baro_alt != null ? Math.round(baro_alt * 3.28084) : null,
+          speedKt: velocity != null ? Math.round(velocity * 1.94384) : null,
+          heading: true_track != null ? Math.round(true_track) : null,
+          vsFtMin: vertical_rate != null ? Math.round(vertical_rate * 196.85) : null,
+          dist, brng
+        });
+      }
+      out.sort((a,b)=>a.dist-b.dist);
+      planes = out;
+      lastUpdate = new Date();
+      setStatus(true, '即時連線');
+    }catch(err){
+      setStatus(false, '連線失敗，重試中');
+      showToast('無法連線：' + (err && err.message ? err.message : err) + '｜若在 Claude 對話中預覽,請先下載此檔案用瀏覽器直接開啟');
+      console.warn('fetch failed', err);
+    }
+    render();
+  }
+
+  function setStatus(live, text){
+    statusEl.classList.toggle('live', live);
+    statusText.textContent = text;
+  }
+
+  function scheduleFetch(){
+    if(fetchTimer) clearInterval(fetchTimer);
+    fetchPlanes();
+    fetchTimer = setInterval(fetchPlanes, 15000);
+  }
+
+  // ---------------- Radar drawing ----------------
+  function drawRadar(){
+    if(!size) return;
+    const cx = size/2, cy = size/2, R = size/2 - 22;
+    ctx.clearRect(0,0,size,size);
+
+    // background rings
+    ctx.save();
+    for(let i=1;i<=4;i++){
+      const r = R * i/4;
+      ctx.beginPath();
+      ctx.arc(cx,cy,r,0,Math.PI*2);
+      ctx.strokeStyle = i===4 ? 'rgba(75,255,138,0.35)' : 'rgba(75,255,138,0.14)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+    }
+    // spokes
+    for(let a=0;a<360;a+=30){
+      const rad = toRad(a-90);
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      ctx.lineTo(cx + R*Math.cos(rad), cy + R*Math.sin(rad));
+      ctx.strokeStyle = 'rgba(75,255,138,0.08)';
+      ctx.stroke();
+    }
+
+    // sweep
+    const sweepRad = toRad(sweepAngle - 90);
+    const grad = ctx.createConicGradient ? null : null;
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(cx,cy);
+    ctx.arc(cx,cy,R, sweepRad - 0.5, sweepRad);
+    ctx.closePath();
+    const lg = ctx.createLinearGradient(cx,cy, cx + R*Math.cos(sweepRad), cy + R*Math.sin(sweepRad));
+    lg.addColorStop(0, 'rgba(75,255,138,0)');
+    lg.addColorStop(1, 'rgba(75,255,138,0.22)');
+    ctx.fillStyle = lg;
+    ctx.fill();
+    ctx.restore();
+
+    // cardinal labels
+    ctx.font = '600 12px monospace';
+    ctx.fillStyle = 'rgba(220,255,233,0.85)';
+    ctx.textAlign = 'center'; ctx.textBaseline='middle';
+    ctx.fillText('N', cx, cy - R - 10);
+    ctx.fillText('S', cx, cy + R + 10);
+    ctx.fillText('E', cx + R + 10, cy);
+    ctx.fillText('W', cx - R - 10, cy);
+
+    // range ring labels
+    ctx.font = '9px monospace';
+    ctx.fillStyle = 'rgba(111,174,134,0.8)';
+    for(let i=1;i<=4;i++){
+      const km = Math.round(radiusKm * i/4);
+      ctx.fillText(km+'', cx + 4, cy - R*i/4 + 10);
+    }
+    ctx.restore();
+
+    // center dot (you)
+    ctx.beginPath();
+    ctx.arc(cx,cy,4,0,Math.PI*2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx,cy,8,0,Math.PI*2);
+    ctx.strokeStyle='rgba(255,255,255,0.5)';
+    ctx.stroke();
+
+    // planes
+    planes.forEach(p=>{
+      const r = (p.dist / radiusKm) * R;
+      const rad = toRad(p.brng - 90);
+      const x = cx + r*Math.cos(rad);
+      const y = cy + r*Math.sin(rad);
+      p._x = x; p._y = y;
+
+      const isPinned = pinned === p.icao24;
+      const color = isPinned ? '#ffb020' : altColor(p.altFt);
+
+      ctx.save();
+      ctx.translate(x,y);
+      ctx.rotate(toRad((p.heading||0)));
+      ctx.beginPath();
+      ctx.moveTo(0,-7);
+      ctx.lineTo(5,6);
+      ctx.lineTo(0,3);
+      ctx.lineTo(-5,6);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.shadowColor = color;
+      ctx.shadowBlur = isPinned ? 10 : 4;
+      ctx.fill();
+      ctx.restore();
+
+      if(isPinned){
+        ctx.beginPath();
+        ctx.arc(x,y,12,0,Math.PI*2);
+        ctx.strokeStyle = 'rgba(255,176,32,0.8)';
+        ctx.lineWidth = 1.2;
+        ctx.stroke();
+      }
+    });
+  }
+
+  function altColor(ft){
+    if(ft == null) return '#8fd6a8';
+    if(ft < 5000) return '#ff8a5f';
+    if(ft < 15000) return '#ffe066';
+    if(ft < 30000) return '#4bff8a';
+    return '#7fd0ff';
+  }
+
+  function animate(){
+    sweepAngle = (sweepAngle + 1.1) % 360;
+    drawRadar();
+    requestAnimationFrame(animate);
+  }
+
+  // ---------------- List + pin card ----------------
+  function render(){
+    countLabel.textContent = planes.length + ' 架飛機';
+    radiusLabel.textContent = '半徑 ' + radiusKm + ' km';
+    if(lastUpdate){
+      updatedAgo.textContent = '更新於 ' + lastUpdate.toLocaleTimeString('zh-TW',{hour12:false});
+    }
+
+    listEl.innerHTML = '';
+    if(planes.length === 0){
+      listEl.innerHTML = '<div class="empty">目前範圍內沒有偵測到航班</div>';
+    } else {
+      planes.slice(0, 40).forEach(p=>{
+        const row = document.createElement('div');
+        row.className = 'row';
+        row.innerHTML = `
+          <div class="left">
+            <div class="cs">${escapeHtml(p.callsign)}</div>
+            <div class="ctry">${escapeHtml(p.country)} · ${p.dist.toFixed(0)} km</div>
+          </div>
+          <div class="right">
+            ${p.speedKt != null ? p.speedKt+' kt' : '—'}
+            <div class="alt">${p.altFt != null ? p.altFt.toLocaleString()+' ft' : '—'}</div>
+          </div>`;
+        row.addEventListener('click', ()=> pinPlane(p.icao24));
+        listEl.appendChild(row);
+      });
+    }
+
+    if(pinned){
+      const p = planes.find(x=>x.icao24 === pinned);
+      if(p) showPinCard(p); else hidePinCard();
+    }
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function pinPlane(icao24){
+    pinned = (pinned === icao24) ? null : icao24;
+    if(!pinned){ hidePinCard(); return; }
+    const p = planes.find(x=>x.icao24===pinned);
+    if(p) showPinCard(p);
+  }
+
+  function showPinCard(p){
+    document.getElementById('pinCallsign').textContent = p.callsign;
+    document.getElementById('pinCountry').textContent = '登記國家：' + p.country + '（ICAO24 ' + p.icao24.toUpperCase() + '）';
+    document.getElementById('pinRoute').textContent =
+      (p.dist.toFixed(0) + ' km · 方位 ' + p.brng.toFixed(0) + '°');
+    const m = document.getElementById('pinMetrics');
+    m.innerHTML = `
+      <div><span class="k">速度</span> ${p.speedKt != null ? p.speedKt+' kt' : '—'}　<span class="k">航向</span> ${p.heading != null ? p.heading+'°' : '—'}</div>
+      <div><span class="k">高度</span> ${p.altFt != null ? p.altFt.toLocaleString()+' ft' : '—'}　<span class="k">爬升率</span> ${p.vsFtMin != null ? (p.vsFtMin>0?'+':'')+p.vsFtMin+' ft/min' : '—'}</div>
+    `;
+    pinCard.classList.add('show');
+  }
+  function hidePinCard(){
+    pinCard.classList.remove('show');
+    pinned = null;
+  }
+  document.getElementById('pinClose').addEventListener('click', hidePinCard);
+
+  // click on canvas -> nearest plane
+  canvas.addEventListener('click', (e)=>{
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    let best = null, bestD = 22;
+    planes.forEach(p=>{
+      if(p._x == null) return;
+      const d = Math.hypot(p._x-x, p._y-y);
+      if(d < bestD){ bestD = d; best = p; }
+    });
+    if(best) pinPlane(best.icao24); else hidePinCard();
+  });
+
+  // ---------------- Controls ----------------
+  document.getElementById('zoomIn').addEventListener('click', ()=>{
+    zoomIdx = Math.max(0, zoomIdx-1);
+    radiusKm = ZOOM_STEPS[zoomIdx];
+    scheduleFetch();
+  });
+  document.getElementById('zoomOut').addEventListener('click', ()=>{
+    zoomIdx = Math.min(ZOOM_STEPS.length-1, zoomIdx+1);
+    radiusKm = ZOOM_STEPS[zoomIdx];
+    scheduleFetch();
+  });
+
+  document.getElementById('locateBtn').addEventListener('click', locate);
+
+  function showToast(msg){
+    const t = document.createElement('div');
+    t.className = 'toast';
+    t.textContent = msg;
+    document.getElementById('app').appendChild(t);
+    setTimeout(()=> t.remove(), 3200);
+  }
+
+  function locate(){
+    if(!navigator.geolocation){
+      showToast('此裝置不支援定位，使用預設地點');
+      return;
+    }
+    setStatus(false, '定位中…');
+    navigator.geolocation.getCurrentPosition(
+      pos=>{
+        center = { lat: pos.coords.latitude, lon: pos.coords.longitude };
+        scheduleFetch();
+      },
+      err=>{
+        showToast('無法取得定位（' + err.message + '），使用預設地點');
+        scheduleFetch();
+      },
+      { enableHighAccuracy:false, timeout: 6000 }
+    );
+  }
+
+  // ---------------- Init ----------------
+  function init(){
+    resize();
+    locate();
+    animate();
+  }
+  init();
+})();
+</script>
+</body>
+</html>
